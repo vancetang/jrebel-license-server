@@ -224,6 +224,7 @@ start_new_container() {
         -e PORT=${CONTAINER_PORT} \
         -e SECRET_KEY="${SECRET_KEY:-your-secret-key}" \
         -e DEBUG=false \
+        -e TZ=Asia/Shanghai \
         ${PROJECT_NAME}:latest
 
     log_info "容器 ${container_name} 启动完成"

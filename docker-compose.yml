@@ -11,6 +11,7 @@ services:
       - PORT=58080
       - SECRET_KEY=your-secret-key-change-in-production
       - DEBUG=false
+      - TZ=Asia/Shanghai
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:58080/api/status"]
       interval: 30s
