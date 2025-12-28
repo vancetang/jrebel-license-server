@@ -1,15 +1,14 @@
 #!/bin/bash
 
-# JRebel License Server 平滑发布脚本 V2
-# 基于 OpenResty 动态 upstream（多租户版本）实现零停机部署
+# JRebel License Server 部署脚本 V3
+# 基于服务自动注册实现零停机部署
 #
 # 发布流程：
-# 1. 启动新版本容器（使用不同端口）
-# 2. 等待新容器健康检查通过
-# 3. 将新容器注册到 OpenResty（指定 namespace）
-# 4. 逐步降低旧容器权重（流量切换）
-# 5. 从 OpenResty 注销旧容器
-# 6. 停止并删除旧容器
+# 1. 构建新镜像
+# 2. 启动新版本容器（使用不同端口）
+# 3. 等待新容器健康检查通过（容器启动后自动注册到注册中心）
+# 4. 等待一段时间让流量自动切换
+# 5. 停止并删除旧容器（旧容器停止时自动从注册中心注销）
 
 set -e
 
@@ -24,12 +23,10 @@ NC='\033[0m'
 # 配置区域（根据实际情况修改）
 # ============================================
 PROJECT_NAME="jrebel-license-server"
-NAMESPACE="jrebel"                    # OpenResty namespace
-OPENRESTY_ADMIN="http://127.0.0.1:8081"
+NAMESPACE="jrebel"
 HEALTH_CHECK_PATH="/api/status"
 HEALTH_CHECK_TIMEOUT=60               # 健康检查超时（秒）
-WEIGHT_STEP=20                        # 每次权重调整步长
-WEIGHT_INTERVAL=5                     # 权重调整间隔（秒）
+TRAFFIC_SWITCH_WAIT=30                # 流量切换等待时间（秒）
 
 # 端口配置（交替使用）
 PORT_A=58081
@@ -121,90 +118,6 @@ wait_for_healthy() {
     done
 }
 
-# 注册服务到 OpenResty（V2 带 namespace）
-register_service() {
-    local host=$1
-    local port=$2
-    local weight=${3:-100}
-
-    log_info "注册服务到 OpenResty: ns=${NAMESPACE} ${host}:${port} (weight=${weight})"
-
-    local url="${OPENRESTY_ADMIN}/register?ns=${NAMESPACE}&host=${host}&port=${port}&weight=${weight}&health_path=${HEALTH_CHECK_PATH}"
-    local response=$(curl -sf "$url" 2>&1)
-    local exit_code=$?
-
-    if [ $exit_code -eq 0 ]; then
-        log_info "注册成功: $response"
-        return 0
-    else
-        log_error "注册失败: $response"
-        return 1
-    fi
-}
-
-# 从 OpenResty 注销服务（V2 带 namespace）
-deregister_service() {
-    local host=$1
-    local port=$2
-
-    log_info "从 OpenResty 注销服务: ns=${NAMESPACE} ${host}:${port}"
-
-    local url="${OPENRESTY_ADMIN}/deregister?ns=${NAMESPACE}&host=${host}&port=${port}"
-    local response=$(curl -sf "$url" 2>&1)
-
-    if [ $? -eq 0 ]; then
-        log_info "注销成功: $response"
-        return 0
-    else
-        log_warn "注销失败（可能节点不存在）: $response"
-        return 0  # 不影响流程
-    fi
-}
-
-# 调整服务权重（V2 带 namespace）
-set_weight() {
-    local host=$1
-    local port=$2
-    local weight=$3
-
-    local url="${OPENRESTY_ADMIN}/weight?ns=${NAMESPACE}&host=${host}&port=${port}&weight=${weight}"
-    curl -sf "$url" > /dev/null 2>&1
-}
-
-# 逐步切换流量
-gradual_traffic_shift() {
-    local old_host=$1
-    local old_port=$2
-    local new_host=$3
-    local new_port=$4
-
-    log_step "开始逐步切换流量..."
-
-    local old_weight=100
-    local new_weight=0
-
-    while [ $old_weight -gt 0 ]; do
-        old_weight=$((old_weight - WEIGHT_STEP))
-        new_weight=$((new_weight + WEIGHT_STEP))
-
-        if [ $old_weight -lt 0 ]; then
-            old_weight=0
-            new_weight=100
-        fi
-
-        set_weight "$old_host" "$old_port" "$old_weight"
-        set_weight "$new_host" "$new_port" "$new_weight"
-
-        log_info "流量分配: 旧节点=${old_weight}% 新节点=${new_weight}%"
-
-        if [ $old_weight -gt 0 ]; then
-            sleep $WEIGHT_INTERVAL
-        fi
-    done
-
-    log_info "流量切换完成！"
-}
-
 # 构建新镜像
 build_image() {
     log_step "构建新镜像: ${PROJECT_NAME}:latest"
@@ -252,42 +165,27 @@ stop_old_container() {
     if docker ps --format '{{.Names}}' | grep -q "^${container_name}$"; then
         docker stop ${container_name}
         docker rm ${container_name}
-        log_info "旧容器 ${container_name} 已停止并删除"
+        log_info "旧容器 ${container_name} 已停止并删除（自动从注册中心注销）"
     else
         log_info "旧容器 ${container_name} 不存在，跳过"
     fi
 }
 
-# 查看当前节点状态
-show_nodes() {
+# 查看容器状态
+show_containers() {
     echo ""
-    log_info "当前 OpenResty 节点状态 (namespace: ${NAMESPACE}):"
+    log_info "当前容器状态:"
     echo ""
-    curl -sf "${OPENRESTY_ADMIN}/nodes?ns=${NAMESPACE}" 2>/dev/null | python3 -m json.tool 2>/dev/null || echo "无法获取节点状态"
-}
-
-# 查看所有 namespace
-show_all_nodes() {
-    echo ""
-    log_info "所有 OpenResty 节点状态:"
-    echo ""
-    curl -sf "${OPENRESTY_ADMIN}/nodes" 2>/dev/null | python3 -m json.tool 2>/dev/null || echo "无法获取节点状态"
-}
-
-# 查看健康状态
-show_health() {
-    echo ""
-    log_info "健康检查状态 (namespace: ${NAMESPACE}):"
-    echo ""
-    curl -sf "${OPENRESTY_ADMIN}/health?ns=${NAMESPACE}" 2>/dev/null | python3 -m json.tool 2>/dev/null || echo "无法获取健康状态"
+    docker ps --filter "name=${PROJECT_NAME}" --format "table {{.Names}}\t{{.Status}}\t{{.Ports}}" 2>/dev/null || echo "无运行中的容器"
 }
 
 # 主函数 - 执行部署
 main() {
     echo ""
     echo -e "${GREEN}╔════════════════════════════════════════════════════════════╗${NC}"
-    echo -e "${GREEN}║     JRebel License Server 平滑发布脚本 V2                  ║${NC}"
+    echo -e "${GREEN}║     JRebel License Server 部署脚本 V3                      ║${NC}"
     echo -e "${GREEN}║     Namespace: ${NAMESPACE}                                         ║${NC}"
+    echo -e "${GREEN}║     自动注册模式                                           ║${NC}"
     echo -e "${GREEN}╚════════════════════════════════════════════════════════════╝${NC}"
     echo ""
 
@@ -296,15 +194,6 @@ main() {
         log_error "Docker 未安装或不可用"
         exit 1
     fi
-
-    # 检查 OpenResty 管理接口是否可用
-    log_info "检查 OpenResty 管理接口..."
-    if ! curl -sf "${OPENRESTY_ADMIN}/nodes" > /dev/null 2>&1; then
-        log_error "无法连接 OpenResty 管理接口: ${OPENRESTY_ADMIN}"
-        log_error "请确保 OpenResty 已启动并配置正确"
-        exit 1
-    fi
-    log_info "OpenResty 管理接口正常"
 
     # 获取当前运行状态
     local current=$(get_current_container)
@@ -316,6 +205,7 @@ main() {
     local next_port=$(echo $next_config | cut -d' ' -f2)
 
     log_info "新容器配置: suffix=${next_suffix}, port=${next_port}"
+    log_info "注册中心: ${REGISTRY_HOST}:${next_port} -> ${REGISTRY_NAMESPACE}"
     echo ""
 
     # 1. 构建新镜像
@@ -326,51 +216,33 @@ main() {
     start_new_container "$next_suffix" "$next_port"
     echo ""
 
-    # 3. 等待健康检查
+    # 3. 等待健康检查（容器启动后会自动注册到注册中心）
     if ! wait_for_healthy "127.0.0.1" "$next_port" "$HEALTH_CHECK_TIMEOUT"; then
         log_error "新容器健康检查失败，执行回滚..."
         docker rm -f "${PROJECT_NAME}-${next_suffix}" 2>/dev/null || true
         exit 1
     fi
+    log_info "新容器已自动注册到注册中心"
     echo ""
 
-    # 4. 注册新服务到 OpenResty（初始权重为 0）
-    register_service "127.0.0.1" "$next_port" 0
-    echo ""
-
-    # 5. 逐步切换流量（如果有旧容器）
+    # 4. 等待流量切换（如果有旧容器）
     if [ "$current" != "none" ]; then
-        local old_port
-        if [ "$current" = "a" ]; then
-            old_port=$PORT_A
-        else
-            old_port=$PORT_B
-        fi
-
-        gradual_traffic_shift "127.0.0.1" "$old_port" "127.0.0.1" "$next_port"
+        log_step "等待 ${TRAFFIC_SWITCH_WAIT} 秒让流量自动切换..."
+        sleep $TRAFFIC_SWITCH_WAIT
         echo ""
 
-        # 6. 注销旧服务
-        deregister_service "127.0.0.1" "$old_port"
-        echo ""
-
-        # 7. 停止旧容器
+        # 5. 停止旧容器（停止时会自动从注册中心注销）
         stop_old_container "$current"
-    else
-        # 首次部署，直接设置权重为 100
-        log_info "首次部署，设置权重为 100"
-        set_weight "127.0.0.1" "$next_port" 100
     fi
 
     echo ""
     echo -e "${GREEN}╔════════════════════════════════════════════════════════════╗${NC}"
-    echo -e "${GREEN}║                    平滑发布完成！                          ║${NC}"
+    echo -e "${GREEN}║                    部署完成！                              ║${NC}"
     echo -e "${GREEN}╚════════════════════════════════════════════════════════════╝${NC}"
 
-    show_nodes
+    show_containers
 
     echo ""
-    log_info "服务地址: http://localhost (通过 OpenResty)"
     log_info "直接访问: http://localhost:${next_port}"
     echo ""
 }
@@ -411,7 +283,7 @@ rollback() {
         exit 1
     fi
 
-    # 启动旧容器（如果已停止）
+    # 启动旧容器（如果已停止，启动后会自动注册）
     if ! docker ps --format '{{.Names}}' | grep -q "^${old_container}$"; then
         log_info "启动旧容器 ${old_container}..."
         docker start ${old_container}
@@ -421,31 +293,66 @@ rollback() {
             log_error "旧容器健康检查失败"
             exit 1
         fi
+        log_info "旧容器已自动注册到注册中心"
     fi
 
-    # 注册旧节点
-    register_service "127.0.0.1" "$old_port" 0
+    # 等待流量切换
+    log_step "等待 ${TRAFFIC_SWITCH_WAIT} 秒让流量自动切换..."
+    sleep $TRAFFIC_SWITCH_WAIT
 
-    # 切换流量
-    gradual_traffic_shift "127.0.0.1" "$new_port" "127.0.0.1" "$old_port"
-
-    # 注销新节点
-    deregister_service "127.0.0.1" "$new_port"
-
-    # 停止新容器
+    # 停止新容器（停止时会自动注销）
     stop_old_container "$new_suffix"
 
     log_info "回滚完成！"
-    show_nodes
+    show_containers
 }
 
-# 快速注册当前容器（用于首次配置）
-quick_register() {
-    local port=${1:-58080}
+# 快速启动（不构建镜像）
+quick_start() {
+    local port=${1:-$PORT_A}
+    local suffix="a"
 
-    log_info "快速注册服务: 127.0.0.1:${port}"
-    register_service "127.0.0.1" "$port" 100
-    show_nodes
+    if [ "$port" = "$PORT_B" ]; then
+        suffix="b"
+    fi
+
+    log_info "快速启动容器: 端口 ${port}"
+    start_new_container "$suffix" "$port"
+
+    if wait_for_healthy "127.0.0.1" "$port" "$HEALTH_CHECK_TIMEOUT"; then
+        log_info "容器已启动并自动注册到注册中心"
+    else
+        log_error "容器启动失败"
+        exit 1
+    fi
+
+    show_containers
+}
+
+# 停止所有容器
+stop_all() {
+    log_step "停止所有 ${PROJECT_NAME} 容器..."
+
+    docker ps --filter "name=${PROJECT_NAME}" --format '{{.Names}}' | while read container; do
+        log_info "停止容器: ${container}"
+        docker stop ${container} 2>/dev/null || true
+        docker rm ${container} 2>/dev/null || true
+    done
+
+    log_info "所有容器已停止（自动从注册中心注销）"
+}
+
+# 查看日志
+show_logs() {
+    local container=${1:-$(docker ps --filter "name=${PROJECT_NAME}" --format '{{.Names}}' | head -1)}
+
+    if [ -z "$container" ]; then
+        log_error "没有运行中的容器"
+        exit 1
+    fi
+
+    log_info "查看容器日志: ${container}"
+    docker logs -f --tail 100 ${container}
 }
 
 # 帮助信息
@@ -454,29 +361,34 @@ show_help() {
     echo "用法: $0 [命令] [参数]"
     echo ""
     echo "命令:"
-    echo "  deploy          执行平滑发布（默认）"
+    echo "  deploy          执行部署（默认）- 构建镜像并启动新容器"
     echo "  rollback        回滚到上一个版本"
-    echo "  status          查看当前 namespace 节点状态"
-    echo "  status-all      查看所有 namespace 节点状态"
-    echo "  health          查看健康检查状态"
-    echo "  register [port] 快速注册节点（默认端口 58080）"
+    echo "  start [port]    快速启动（不构建镜像）"
+    echo "  stop            停止所有容器"
+    echo "  status          查看容器状态"
+    echo "  logs [name]     查看容器日志"
     echo "  help            显示帮助信息"
     echo ""
     echo "配置:"
-    echo "  PROJECT_NAME    = ${PROJECT_NAME}"
-    echo "  NAMESPACE       = ${NAMESPACE}"
-    echo "  PORT_A          = ${PORT_A}"
-    echo "  PORT_B          = ${PORT_B}"
-    echo "  OPENRESTY_ADMIN = ${OPENRESTY_ADMIN}"
+    echo "  PROJECT_NAME      = ${PROJECT_NAME}"
+    echo "  NAMESPACE         = ${NAMESPACE}"
+    echo "  PORT_A            = ${PORT_A}"
+    echo "  PORT_B            = ${PORT_B}"
+    echo "  REGISTRY_HOST     = ${REGISTRY_HOST}"
     echo ""
     echo "环境变量:"
-    echo "  SECRET_KEY      Flask 密钥"
+    echo "  SECRET_KEY                      Flask 密钥"
+    echo "  KENGER_REGISTRY_HOST            注册中心主机地址"
+    echo "  KENGER_REGISTRY_NAMESPACE       注册中心命名空间"
+    echo "  KENGER_REGISTRY_WEIGHT          服务权重"
+    echo "  KENGER_REGISTRY_HEARTBEAT_INTERVAL  心跳间隔"
     echo ""
     echo "示例:"
-    echo "  $0 deploy              # 执行平滑发布"
-    echo "  $0 status              # 查看节点状态"
-    echo "  $0 register 58080      # 注册现有服务"
+    echo "  $0 deploy              # 执行部署"
+    echo "  $0 status              # 查看容器状态"
+    echo "  $0 start 58081         # 快速启动（端口 58081）"
     echo "  $0 rollback            # 回滚到上一版本"
+    echo "  $0 logs                # 查看日志"
     echo ""
 }
 
@@ -488,17 +400,17 @@ case "${1:-deploy}" in
     rollback)
         rollback
         ;;
+    start)
+        quick_start "${2:-$PORT_A}"
+        ;;
+    stop)
+        stop_all
+        ;;
     status)
-        show_nodes
+        show_containers
         ;;
-    status-all)
-        show_all_nodes
-        ;;
-    health)
-        show_health
-        ;;
-    register)
-        quick_register "${2:-58080}"
+    logs)
+        show_logs "$2"
         ;;
     help|--help|-h)
         show_help
