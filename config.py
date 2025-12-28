@@ -8,7 +8,7 @@ import json
 import logging
 import os
 
-from kengerkit import KengerClient
+from kengerkit import KengerClient, ServiceRegistry
 
 logger = logging.getLogger(__name__)
 
@@ -26,6 +26,46 @@ try:
     logger.info("KengerClient 初始化成功")
 except Exception as e:
     logger.warning(f"KengerClient 初始化失败: {e}，将使用环境变量配置")
+
+
+def init_service_registry() -> ServiceRegistry:
+    """初始化服务注册器
+
+    从环境变量读取配置:
+        KENGER_REGISTRY_HOST: 注册的主机地址（公网IP或域名）
+        KENGER_REGISTRY_PORT: 注册的端口
+        KENGER_REGISTRY_NAMESPACE: 命名空间，默认 jrebel
+        KENGER_REGISTRY_WEIGHT: 权重，默认 100
+        KENGER_REGISTRY_HEALTH_PATH: 健康检查路径，默认 /api/status
+        KENGER_REGISTRY_HEARTBEAT_INTERVAL: 心跳间隔（秒），默认 10
+
+    Returns:
+        ServiceRegistry 实例，如果配置不完整则返回 None
+    """
+    if not kenger_client:
+        logger.warning("KengerClient 未初始化，无法启动服务注册")
+        return None
+
+    # 检查必要的环境变量
+    registry_host = os.environ.get('KENGER_REGISTRY_HOST')
+    registry_port = os.environ.get('KENGER_REGISTRY_PORT')
+    registry_namespace = os.environ.get('KENGER_REGISTRY_NAMESPACE', 'jrebel')
+
+    if not registry_host or not registry_port:
+        logger.info("未配置 KENGER_REGISTRY_HOST 或 KENGER_REGISTRY_PORT，跳过服务注册")
+        return None
+
+    try:
+        registry = ServiceRegistry.from_env(kenger_client)
+        logger.info(f"ServiceRegistry 初始化成功: {registry_namespace} -> {registry_host}:{registry_port}")
+        return registry
+    except Exception as e:
+        logger.warning(f"ServiceRegistry 初始化失败: {e}")
+        return None
+
+
+# 服务注册器实例（延迟初始化）
+service_registry = None
 
 
 def get_config_value(key: str, default: str = None) -> str:

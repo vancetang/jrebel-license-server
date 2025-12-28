@@ -38,6 +38,12 @@ PORT_B=58082
 # 容器内部端口
 CONTAINER_PORT=58080
 
+# 服务注册配置（容器启动后自动注册到注册中心）
+REGISTRY_HOST="${KENGER_REGISTRY_HOST:-43.143.21.219}"  # 公网IP或域名
+REGISTRY_NAMESPACE="${KENGER_REGISTRY_NAMESPACE:-jrebel}"
+REGISTRY_WEIGHT="${KENGER_REGISTRY_WEIGHT:-100}"
+REGISTRY_HEARTBEAT_INTERVAL="${KENGER_REGISTRY_HEARTBEAT_INTERVAL:-10}"
+
 # ============================================
 # 以下为脚本逻辑，一般不需要修改
 # ============================================
@@ -225,6 +231,12 @@ start_new_container() {
         -e SECRET_KEY="${SECRET_KEY:-your-secret-key}" \
         -e DEBUG=false \
         -e TZ=Asia/Shanghai \
+        -e KENGER_REGISTRY_HOST="${REGISTRY_HOST}" \
+        -e KENGER_REGISTRY_PORT="${port}" \
+        -e KENGER_REGISTRY_NAMESPACE="${REGISTRY_NAMESPACE}" \
+        -e KENGER_REGISTRY_WEIGHT="${REGISTRY_WEIGHT}" \
+        -e KENGER_REGISTRY_HEALTH_PATH="${HEALTH_CHECK_PATH}" \
+        -e KENGER_REGISTRY_HEARTBEAT_INTERVAL="${REGISTRY_HEARTBEAT_INTERVAL}" \
         ${PROJECT_NAME}:latest
 
     log_info "容器 ${container_name} 启动完成"

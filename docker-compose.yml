@@ -12,6 +12,13 @@ services:
       - SECRET_KEY=your-secret-key-change-in-production
       - DEBUG=false
       - TZ=Asia/Shanghai
+      # 服务注册配置（启用后自动注册到注册中心）
+      # - KENGER_REGISTRY_HOST=43.143.21.219  # 公网IP或域名
+      # - KENGER_REGISTRY_PORT=58080          # 对外暴露的端口
+      # - KENGER_REGISTRY_NAMESPACE=jrebel    # 命名空间
+      # - KENGER_REGISTRY_WEIGHT=100          # 权重
+      # - KENGER_REGISTRY_HEALTH_PATH=/api/status
+      # - KENGER_REGISTRY_HEARTBEAT_INTERVAL=10
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:58080/api/status"]
       interval: 30s

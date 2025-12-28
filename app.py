@@ -11,7 +11,7 @@ import os
 
 from flask import Flask
 
-from config import SECRET_KEY
+from config import SECRET_KEY, init_service_registry
 from routes import web_bp, jrebel_bp, jetbrains_bp, admin_bp
 
 # 配置日志
@@ -20,6 +20,9 @@ logging.basicConfig(
     format='%(asctime)s - %(levelname)s - %(message)s'
 )
 logger = logging.getLogger(__name__)
+
+# 服务注册器实例
+_service_registry = None
 
 
 def create_app():
@@ -36,8 +39,26 @@ def create_app():
     return app
 
 
+def start_service_registry():
+    """启动服务注册和心跳"""
+    global _service_registry
+
+    try:
+        _service_registry = init_service_registry()
+        if _service_registry:
+            _service_registry.start()
+            logger.info("服务注册和心跳已启动")
+        else:
+            logger.info("服务注册未启用（未配置环境变量）")
+    except Exception as e:
+        logger.error(f"启动服务注册失败: {e}")
+
+
 # 创建应用实例
 app = create_app()
+
+# 启动服务注册（在 gunicorn 中会在 worker 启动时执行）
+start_service_registry()
 
 
 if __name__ == '__main__':
