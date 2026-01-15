@@ -340,6 +340,18 @@
         </div>
     </div>
 
+    <!-- 评论区 -->
+    <div class="container mb-5">
+        <div class="card">
+            <div class="card-header">
+                <h5 class="mb-0"><i class="bi bi-chat-dots"></i> 评论区</h5>
+            </div>
+            <div class="card-body">
+                <div id="Comments"></div>
+            </div>
+        </div>
+    </div>
+
     <footer class="footer">
         <div class="container text-center text-muted">
             <p class="mb-1">JRebel & JetBrains License Server</p>
@@ -352,6 +364,20 @@
     </footer>
 
     <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
+
+    <!-- Artalk 评论系统 -->
+    <link href="https://cdnjs.cloudflare.com/ajax/libs/artalk/2.9.1/Artalk.css" rel="stylesheet">
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/artalk/2.9.1/Artalk.js"></script>
+    <script>
+        Artalk.init({
+            el:        '#Comments',
+            pageKey:   '/',
+            pageTitle: 'JRebel & JetBrains License Server',
+            server:    'https://artalk.156354.xyz',
+            site:      'jrebel',
+        });
+    </script>
+
     <script>
         let selectedProduct = 'jrebel';
         
