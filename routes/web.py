@@ -68,9 +68,8 @@ def api_status():
     })
 
 
-@web_bp.route('/sitemap.xml')
-def sitemap():
-    """生成 sitemap.xml 供搜索引擎爬取"""
+def _generate_sitemap_content():
+    """生成 sitemap XML 内容的通用函数"""
     host = request.host
     # 优先使用 X-Forwarded-Proto，适配反向代理
     scheme = request.headers.get('X-Forwarded-Proto', request.scheme)
@@ -100,8 +99,25 @@ def sitemap():
         xml_content += '  </url>\n'
 
     xml_content += '</urlset>'
+    return xml_content
 
-    return Response(xml_content, mimetype='application/xml')
+
+@web_bp.route('/sitemap.xml')
+def sitemap():
+    """生成 sitemap.xml 供搜索引擎爬取"""
+    return Response(_generate_sitemap_content(), mimetype='application/xml')
+
+
+@web_bp.route('/sitemap_index.xml')
+def sitemap_index():
+    """备用 sitemap 路径 - 如果 sitemap.xml 无法抓取，尝试提交这个"""
+    return Response(_generate_sitemap_content(), mimetype='application/xml')
+
+
+@web_bp.route('/site-map.xml')
+def sitemap_alt():
+    """另一个备用 sitemap 路径"""
+    return Response(_generate_sitemap_content(), mimetype='application/xml')
 
 
 @web_bp.route('/robots.txt')
@@ -121,6 +137,7 @@ Disallow: /api/
 Disallow: /admin
 
 Sitemap: {base_url}/sitemap.xml
+Sitemap: {base_url}/sitemap_index.xml
 """
     return Response(content, mimetype='text/plain')
 
