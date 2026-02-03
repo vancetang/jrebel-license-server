@@ -72,7 +72,11 @@ def api_status():
 def sitemap():
     """生成 sitemap.xml 供搜索引擎爬取"""
     host = request.host
-    scheme = request.scheme
+    # 优先使用 X-Forwarded-Proto，适配反向代理
+    scheme = request.headers.get('X-Forwarded-Proto', request.scheme)
+    # 如果是生产环境域名，强制使用 https
+    if 'idea.156354.xyz' in host:
+        scheme = 'https'
     base_url = f"{scheme}://{host}"
 
     # 获取当前日期作为 lastmod
