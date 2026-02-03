@@ -108,7 +108,11 @@ def sitemap():
 def robots():
     """生成 robots.txt"""
     host = request.host
-    scheme = request.scheme
+    # 优先使用 X-Forwarded-Proto，适配反向代理
+    scheme = request.headers.get('X-Forwarded-Proto', request.scheme)
+    # 如果是生产环境域名，强制使用 https
+    if 'idea.156354.xyz' in host:
+        scheme = 'https'
     base_url = f"{scheme}://{host}"
 
     content = f"""User-agent: *
