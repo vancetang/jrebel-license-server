@@ -4,8 +4,9 @@ Web 界面路由
 """
 
 import uuid
+from datetime import datetime
 
-from flask import Blueprint, request, render_template, jsonify
+from flask import Blueprint, request, render_template, jsonify, Response
 
 from services import jrebel_signer, jetbrains_signer
 
@@ -65,6 +66,55 @@ def api_status():
         'jrebel_signer': jrebel_signer.private_key is not None,
         'jetbrains_signer': jetbrains_signer.private_key is not None
     })
+
+
+@web_bp.route('/sitemap.xml')
+def sitemap():
+    """生成 sitemap.xml 供搜索引擎爬取"""
+    host = request.host
+    scheme = request.scheme
+    base_url = f"{scheme}://{host}"
+
+    # 获取当前日期作为 lastmod
+    today = datetime.now().strftime('%Y-%m-%d')
+
+    # 定义网站的主要页面
+    pages = [
+        {'loc': base_url + '/', 'priority': '1.0', 'changefreq': 'weekly'},
+    ]
+
+    # 生成 XML
+    xml_content = '<?xml version="1.0" encoding="UTF-8"?>\n'
+    xml_content += '<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">\n'
+
+    for page in pages:
+        xml_content += '  <url>\n'
+        xml_content += f'    <loc>{page["loc"]}</loc>\n'
+        xml_content += f'    <lastmod>{today}</lastmod>\n'
+        xml_content += f'    <changefreq>{page["changefreq"]}</changefreq>\n'
+        xml_content += f'    <priority>{page["priority"]}</priority>\n'
+        xml_content += '  </url>\n'
+
+    xml_content += '</urlset>'
+
+    return Response(xml_content, mimetype='application/xml')
+
+
+@web_bp.route('/robots.txt')
+def robots():
+    """生成 robots.txt"""
+    host = request.host
+    scheme = request.scheme
+    base_url = f"{scheme}://{host}"
+
+    content = f"""User-agent: *
+Allow: /
+Disallow: /api/
+Disallow: /admin
+
+Sitemap: {base_url}/sitemap.xml
+"""
+    return Response(content, mimetype='text/plain')
 
 
 @web_bp.route('/<path:guid>', methods=['GET'])
