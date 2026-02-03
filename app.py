@@ -13,6 +13,7 @@ from flask import Flask
 
 from config import SECRET_KEY, init_service_registry
 from routes import web_bp, jrebel_bp, jetbrains_bp, admin_bp
+from services.scheduler import start_scheduler
 
 # 配置日志
 logging.basicConfig(
@@ -59,6 +60,9 @@ app = create_app()
 
 # 启动服务注册（在 gunicorn 中会在 worker 启动时执行）
 start_service_registry()
+
+# 启动定时任务调度器
+start_scheduler()
 
 
 if __name__ == '__main__':

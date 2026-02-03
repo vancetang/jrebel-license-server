@@ -102,22 +102,40 @@ def _generate_sitemap_content():
     return xml_content
 
 
+def _create_sitemap_response():
+    """创建符合 Google 规范的 sitemap 响应"""
+    content = _generate_sitemap_content()
+    response = Response(content, mimetype='application/xml')
+    # 添加重要的 HTTP 头，提高 Google 抓取成功率
+    response.headers['Content-Type'] = 'application/xml; charset=utf-8'
+    response.headers['X-Robots-Tag'] = 'noindex'  # sitemap 本身不需要被索引
+    response.headers['Cache-Control'] = 'public, max-age=3600'  # 允许缓存 1 小时
+    response.headers['Vary'] = 'Accept-Encoding'
+    return response
+
+
 @web_bp.route('/sitemap.xml')
 def sitemap():
     """生成 sitemap.xml 供搜索引擎爬取"""
-    return Response(_generate_sitemap_content(), mimetype='application/xml')
+    return _create_sitemap_response()
 
 
 @web_bp.route('/sitemap_index.xml')
 def sitemap_index():
     """备用 sitemap 路径 - 如果 sitemap.xml 无法抓取，尝试提交这个"""
-    return Response(_generate_sitemap_content(), mimetype='application/xml')
+    return _create_sitemap_response()
 
 
 @web_bp.route('/site-map.xml')
 def sitemap_alt():
     """另一个备用 sitemap 路径"""
-    return Response(_generate_sitemap_content(), mimetype='application/xml')
+    return _create_sitemap_response()
+
+
+@web_bp.route('/sitemaps.xml')
+def sitemaps():
+    """全新路径 - 绕过 GSC 缓存问题"""
+    return _create_sitemap_response()
 
 
 @web_bp.route('/robots.txt')
