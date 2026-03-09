@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
 """
 后台管理 API 路由
+前端已迁移到 Cloudflare Pages
 """
 
-from flask import Blueprint, request, render_template, jsonify
+from flask import Blueprint, request, jsonify, redirect
 
 from database import get_usage_records, get_usage_stats
 from routes.utils import admin_required
@@ -13,8 +14,8 @@ admin_bp = Blueprint('admin', __name__)
 
 @admin_bp.route('/admin')
 def admin_page():
-    """后台管理页面"""
-    return render_template('admin.html')
+    """后台管理页面 - 重定向到前端"""
+    return redirect('https://idea.156354.xyz/admin.html', code=302)
 
 
 @admin_bp.route('/api/admin/stats')
@@ -33,4 +34,3 @@ def admin_records():
     search = request.args.get('search', '').strip()
 
     return jsonify(get_usage_records(page, page_size, search if search else None))
-

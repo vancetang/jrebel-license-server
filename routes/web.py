@@ -1,12 +1,14 @@
 #!/usr/bin/env python3
 """
-Web 界面路由
+Web API 路由
+前端已迁移到 Cloudflare Pages (idea.156354.xyz)
+后端只保留 API 接口
 """
 
 import uuid
 from datetime import datetime
 
-from flask import Blueprint, request, render_template, jsonify, Response
+from flask import Blueprint, request, jsonify, Response, redirect
 
 from services import jrebel_signer, jetbrains_signer
 
@@ -15,17 +17,8 @@ web_bp = Blueprint('web', __name__)
 
 @web_bp.route('/')
 def index():
-    """首页 - Web 界面"""
-    host = request.host
-    scheme = request.scheme
-    base_url = f"{scheme}://{host}"
-
-    # 生成示例 GUID
-    example_guid = str(uuid.uuid4())
-
-    return render_template('index.html',
-                           base_url=base_url,
-                           example_guid=example_guid)
+    """首页 - 重定向到前端"""
+    return redirect('https://idea.156354.xyz', code=302)
 
 
 @web_bp.route('/generate', methods=['POST'])
@@ -39,9 +32,8 @@ def generate_url():
     # 生成或使用自定义 GUID
     guid = custom_guid if custom_guid else str(uuid.uuid4())
 
-    host = request.host
-    scheme = request.scheme
-    base_url = f"{scheme}://{host}"
+    # 使用后端 API 域名构建激活 URL
+    base_url = 'https://api.idea.156354.xyz'
 
     if product == 'jrebel':
         activation_url = f"{base_url}/{guid}"
@@ -62,31 +54,21 @@ def api_status():
     """API 状态检查"""
     return jsonify({
         'status': 'running',
-        'version': '1.0.0',
+        'version': '2.0.0',
         'jrebel_signer': jrebel_signer.private_key is not None,
         'jetbrains_signer': jetbrains_signer.private_key is not None
     })
 
 
 def _generate_sitemap_content():
-    """生成 sitemap XML 内容的通用函数"""
-    host = request.host
-    # 优先使用 X-Forwarded-Proto，适配反向代理
-    scheme = request.headers.get('X-Forwarded-Proto', request.scheme)
-    # 如果是生产环境域名，强制使用 https
-    if 'idea.156354.xyz' in host:
-        scheme = 'https'
-    base_url = f"{scheme}://{host}"
-
-    # 获取当前日期作为 lastmod
+    """生成 sitemap XML 内容"""
+    base_url = 'https://idea.156354.xyz'
     today = datetime.now().strftime('%Y-%m-%d')
 
-    # 定义网站的主要页面
     pages = [
         {'loc': base_url + '/', 'priority': '1.0', 'changefreq': 'weekly'},
     ]
 
-    # 生成 XML
     xml_content = '<?xml version="1.0" encoding="UTF-8"?>\n'
     xml_content += '<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">\n'
 
@@ -106,23 +88,22 @@ def _create_sitemap_response():
     """创建符合 Google 规范的 sitemap 响应"""
     content = _generate_sitemap_content()
     response = Response(content, mimetype='application/xml')
-    # 添加重要的 HTTP 头，提高 Google 抓取成功率
     response.headers['Content-Type'] = 'application/xml; charset=utf-8'
-    response.headers['X-Robots-Tag'] = 'noindex'  # sitemap 本身不需要被索引
-    response.headers['Cache-Control'] = 'public, max-age=3600'  # 允许缓存 1 小时
+    response.headers['X-Robots-Tag'] = 'noindex'
+    response.headers['Cache-Control'] = 'public, max-age=3600'
     response.headers['Vary'] = 'Accept-Encoding'
     return response
 
 
 @web_bp.route('/sitemap.xml')
 def sitemap():
-    """生成 sitemap.xml 供搜索引擎爬取"""
+    """生成 sitemap.xml"""
     return _create_sitemap_response()
 
 
 @web_bp.route('/sitemap_index.xml')
 def sitemap_index():
-    """备用 sitemap 路径 - 如果 sitemap.xml 无法抓取，尝试提交这个"""
+    """备用 sitemap 路径"""
     return _create_sitemap_response()
 
 
@@ -134,20 +115,14 @@ def sitemap_alt():
 
 @web_bp.route('/sitemaps.xml')
 def sitemaps():
-    """全新路径 - 绕过 GSC 缓存问题"""
+    """全新路径"""
     return _create_sitemap_response()
 
 
 @web_bp.route('/robots.txt')
 def robots():
     """生成 robots.txt"""
-    host = request.host
-    # 优先使用 X-Forwarded-Proto，适配反向代理
-    scheme = request.headers.get('X-Forwarded-Proto', request.scheme)
-    # 如果是生产环境域名，强制使用 https
-    if 'idea.156354.xyz' in host:
-        scheme = 'https'
-    base_url = f"{scheme}://{host}"
+    base_url = 'https://idea.156354.xyz'
 
     content = f"""User-agent: *
 Allow: /
@@ -162,18 +137,12 @@ Sitemap: {base_url}/sitemap_index.xml
 
 @web_bp.route('/<path:guid>', methods=['GET'])
 def handle_guid_path(guid):
-    """处理 GUID 路径访问 (用于 JRebel 激活页面)"""
+    """处理 GUID 路径访问 (用于 JRebel 激活)
+    保留此路由因为 JRebel 客户端会直接请求 /{GUID} 路径进行激活验证
+    """
     # 如果是静态文件请求或管理页面，跳过
     if guid.startswith('static/') or guid.startswith('api/') or guid == 'admin':
         return '', 404
 
-    # 返回激活信息页面
-    host = request.host
-    scheme = request.scheme
-    base_url = f"{scheme}://{host}"
-
-    return render_template('activation.html',
-                           guid=guid,
-                           base_url=base_url,
-                           activation_url=f"{base_url}/{guid}")
-
+    # 重定向到前端激活页面
+    return redirect(f'https://idea.156354.xyz/activation.html?guid={guid}&base_url=https://api.idea.156354.xyz', code=302)

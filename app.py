@@ -10,6 +10,7 @@ import logging
 import os
 
 from flask import Flask
+from flask_cors import CORS
 
 from config import SECRET_KEY, init_service_registry
 from routes import web_bp, jrebel_bp, jetbrains_bp, admin_bp
@@ -30,6 +31,13 @@ def create_app():
     """创建 Flask 应用"""
     app = Flask(__name__)
     app.config['SECRET_KEY'] = SECRET_KEY
+
+    # 启用 CORS（允许前端 Cloudflare Pages 跨域访问）
+    CORS(app, origins=[
+        'https://idea.156354.xyz',
+        'http://localhost:*',
+        'http://127.0.0.1:*',
+    ], supports_credentials=True)
 
     # 注册蓝图
     app.register_blueprint(web_bp)
