@@ -137,7 +137,7 @@
         // 从 URL 参数读取 guid 和 base_url
         const params = new URLSearchParams(window.location.search);
         const guid = params.get('guid') || '';
-        const baseUrl = params.get('base_url') || 'https://api.idea.156354.xyz';
+        const baseUrl = params.get('base_url') || 'https://ideabackend.156354.xyz';
         const activationUrl = guid ? `${baseUrl}/${guid}` : baseUrl;
 
         document.getElementById('activationUrl').textContent = activationUrl;

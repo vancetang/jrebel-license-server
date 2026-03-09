@@ -33,7 +33,7 @@ def generate_url():
     guid = custom_guid if custom_guid else str(uuid.uuid4())
 
     # 使用后端 API 域名构建激活 URL
-    base_url = 'https://api.idea.156354.xyz'
+    base_url = 'https://ideabackend.156354.xyz'
 
     if product == 'jrebel':
         activation_url = f"{base_url}/{guid}"
@@ -145,4 +145,4 @@ def handle_guid_path(guid):
         return '', 404
 
     # 重定向到前端激活页面
-    return redirect(f'https://idea.156354.xyz/activation.html?guid={guid}&base_url=https://api.idea.156354.xyz', code=302)
+    return redirect(f'https://idea.156354.xyz/activation.html?guid={guid}&base_url=https://ideabackend.156354.xyz', code=302)
