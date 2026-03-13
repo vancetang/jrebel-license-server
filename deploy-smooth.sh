@@ -41,6 +41,20 @@ REGISTRY_NAMESPACE="${KENGER_REGISTRY_NAMESPACE:-jrebel}"
 REGISTRY_WEIGHT="${KENGER_REGISTRY_WEIGHT:-100}"
 REGISTRY_HEARTBEAT_INTERVAL="${KENGER_REGISTRY_HEARTBEAT_INTERVAL:-10}"
 
+# 前端部署配置
+FRONTEND_DEPLOY="${FRONTEND_DEPLOY:-true}"            # true/false
+FRONTEND_DIR="${FRONTEND_DIR:-frontend}"
+CF_PAGES_PROJECT="${CF_PAGES_PROJECT:-jrebel-web}"
+CF_ACCOUNT_ID="${CF_ACCOUNT_ID:-}"
+CF_API_TOKEN="${CF_API_TOKEN:-}"
+FRONTEND_DOMAIN="${FRONTEND_DOMAIN:-idea.156354.xyz}"
+BACKEND_DOMAIN="${BACKEND_DOMAIN:-ideabackend.156354.xyz}"
+
+# Tunnel 配置
+TUNNEL_ID="${TUNNEL_ID:-e68531cc-f521-4f8e-bd53-cd1a697993d3}"
+CLOUDFLARED_CONFIG="${CLOUDFLARED_CONFIG:-/etc/cloudflared/config.yml}"
+CLOUDFLARED_SERVICE="${CLOUDFLARED_SERVICE:-cloudflared}"
+
 # ============================================
 # 以下为脚本逻辑，一般不需要修改
 # ============================================
@@ -179,8 +193,114 @@ show_containers() {
     docker ps --filter "name=${PROJECT_NAME}" --format "table {{.Names}}\t{{.Status}}\t{{.Ports}}" 2>/dev/null || echo "无运行中的容器"
 }
 
-# 主函数 - 执行部署
-main() {
+ensure_requirements() {
+    if ! command -v curl &> /dev/null; then
+        log_error "curl 未安装"
+        exit 1
+    fi
+
+    if ! command -v npx &> /dev/null; then
+        log_error "npx 未安装，请先安装 Node.js"
+        exit 1
+    fi
+}
+
+update_cloudflared_config() {
+    log_step "更新 cloudflared 配置: ${CLOUDFLARED_CONFIG}"
+
+    if [ ! -f "${CLOUDFLARED_CONFIG}"; then
+        log_error "未找到 cloudflared 配置文件: ${CLOUDFLARED_CONFIG}"
+        exit 1
+    fi
+
+    cp "${CLOUDFLARED_CONFIG}" "${CLOUDFLARED_CONFIG}.bak.$(date +%Y%m%d%H%M%S)"
+
+    if grep -q "hostname: ${BACKEND_DOMAIN}" "${CLOUDFLARED_CONFIG}"; then
+        log_info "cloudflared 配置已包含 ${BACKEND_DOMAIN}"
+    else
+        if grep -q "hostname: .*idea\.156354\.xyz" "${CLOUDFLARED_CONFIG}"; then
+            sed -i "s/hostname: .*idea\.156354\.xyz/hostname: ${BACKEND_DOMAIN}/" "${CLOUDFLARED_CONFIG}"
+            log_info "已将旧后端域名替换为 ${BACKEND_DOMAIN}"
+        else
+            log_warn "未在配置中找到可替换的旧域名，请手动确认 ${CLOUDFLARED_CONFIG}"
+        fi
+    fi
+
+    if command -v cloudflared &> /dev/null; then
+        cloudflared tunnel route dns ${TUNNEL_ID} ${BACKEND_DOMAIN} --overwrite-dns || true
+    else
+        log_warn "未安装 cloudflared 命令，跳过 tunnel dns route"
+    fi
+
+    if command -v systemctl &> /dev/null; then
+        systemctl restart ${CLOUDFLARED_SERVICE}
+        log_info "已重启 ${CLOUDFLARED_SERVICE}"
+    else
+        log_warn "未检测到 systemctl，请手动重启 ${CLOUDFLARED_SERVICE}"
+    fi
+}
+
+deploy_frontend() {
+    if [ "${FRONTEND_DEPLOY}" != "true" ]; then
+        log_info "FRONTEND_DEPLOY=false，跳过前端部署"
+        return 0
+    fi
+
+    log_step "部署前端到 Cloudflare Pages"
+
+    if [ -z "${CF_API_TOKEN}" ] || [ -z "${CF_ACCOUNT_ID}" ]; then
+        log_error "请先配置 CF_API_TOKEN 和 CF_ACCOUNT_ID"
+        exit 1
+    fi
+
+    if [ ! -d "${FRONTEND_DIR}" ]; then
+        log_error "前端目录不存在: ${FRONTEND_DIR}"
+        exit 1
+    fi
+
+    CLOUDFLARE_API_TOKEN="${CF_API_TOKEN}" \
+    CLOUDFLARE_ACCOUNT_ID="${CF_ACCOUNT_ID}" \
+    npx wrangler pages project create "${CF_PAGES_PROJECT}" --production-branch main >/dev/null 2>&1 || true
+
+    CLOUDFLARE_API_TOKEN="${CF_API_TOKEN}" \
+    CLOUDFLARE_ACCOUNT_ID="${CF_ACCOUNT_ID}" \
+    npx wrangler pages deploy "./${FRONTEND_DIR}" \
+        --project-name="${CF_PAGES_PROJECT}" \
+        --branch=main \
+        --commit-dirty=true
+
+    log_info "前端部署完成"
+}
+
+bind_frontend_domain() {
+    if [ "${FRONTEND_DEPLOY}" != "true" ]; then
+        return 0
+    fi
+
+    log_step "确保 Pages 域名绑定: ${FRONTEND_DOMAIN}"
+
+    if [ -z "${CF_API_TOKEN}" ] || [ -z "${CF_ACCOUNT_ID}" ]; then
+        log_error "请先配置 CF_API_TOKEN 和 CF_ACCOUNT_ID"
+        exit 1
+    fi
+
+    curl -s -X POST "https://api.cloudflare.com/client/v4/accounts/${CF_ACCOUNT_ID}/pages/projects/${CF_PAGES_PROJECT}/domains" \
+      -H "Authorization: Bearer ${CF_API_TOKEN}" \
+      -H "Content-Type: application/json" \
+      -d "{\"name\":\"${FRONTEND_DOMAIN}\"}" >/dev/null || true
+}
+
+verify_routes() {
+    log_step "验证前后端可访问性"
+
+    curl -sf "https://${FRONTEND_DOMAIN}/" >/dev/null
+    log_info "前端可访问: https://${FRONTEND_DOMAIN}/"
+
+    curl -sf "https://${BACKEND_DOMAIN}/api/status" >/dev/null
+    log_info "后端可访问: https://${BACKEND_DOMAIN}/api/status"
+}
+
+backend_main() {
     echo ""
     echo -e "${GREEN}╔════════════════════════════════════════════════════════════╗${NC}"
     echo -e "${GREEN}║     JRebel License Server 部署脚本 V3                      ║${NC}"
@@ -208,15 +328,21 @@ main() {
     log_info "注册中心: ${REGISTRY_HOST}:${next_port} -> ${REGISTRY_NAMESPACE}"
     echo ""
 
-    # 1. 构建新镜像
+    ensure_requirements
+
+    # 1. 更新 tunnel 与 cloudflared 配置
+    update_cloudflared_config
+    echo ""
+
+    # 2. 构建新镜像
     build_image
     echo ""
 
-    # 2. 启动新容器
+    # 3. 启动新容器
     start_new_container "$next_suffix" "$next_port"
     echo ""
 
-    # 3. 等待健康检查（容器启动后会自动注册到注册中心）
+    # 4. 等待健康检查（容器启动后会自动注册到注册中心）
     if ! wait_for_healthy "127.0.0.1" "$next_port" "$HEALTH_CHECK_TIMEOUT"; then
         log_error "新容器健康检查失败，执行回滚..."
         docker rm -f "${PROJECT_NAME}-${next_suffix}" 2>/dev/null || true
@@ -225,25 +351,52 @@ main() {
     log_info "新容器已自动注册到注册中心"
     echo ""
 
-    # 4. 等待流量切换（如果有旧容器）
+    # 5. 等待流量切换（如果有旧容器）
     if [ "$current" != "none" ]; then
         log_step "等待 ${TRAFFIC_SWITCH_WAIT} 秒让流量自动切换..."
         sleep $TRAFFIC_SWITCH_WAIT
         echo ""
 
-        # 5. 停止旧容器（停止时会自动从注册中心注销）
+        # 6. 停止旧容器（停止时会自动从注册中心注销）
         stop_old_container "$current"
     fi
 
     echo ""
     echo -e "${GREEN}╔════════════════════════════════════════════════════════════╗${NC}"
-    echo -e "${GREEN}║                    部署完成！                              ║${NC}"
+    echo -e "${GREEN}║                    后端部署完成！                          ║${NC}"
     echo -e "${GREEN}╚════════════════════════════════════════════════════════════╝${NC}"
 
     show_containers
 
     echo ""
-    log_info "直接访问: http://localhost:${next_port}"
+    log_info "本地后端: http://localhost:${next_port}"
+    log_info "后端地址: https://${BACKEND_DOMAIN}/api/status"
+    echo ""
+}
+
+# 主函数 - 执行部署
+main() {
+    backend_main
+
+    # 7. 部署前端
+    deploy_frontend
+    echo ""
+
+    # 8. 绑定前端域名
+    bind_frontend_domain
+    echo ""
+
+    # 9. 验证前后端
+    verify_routes
+
+    echo ""
+    echo -e "${GREEN}╔════════════════════════════════════════════════════════════╗${NC}"
+    echo -e "${GREEN}║                    全量部署完成！                          ║${NC}"
+    echo -e "${GREEN}╚════════════════════════════════════════════════════════════╝${NC}"
+
+    echo ""
+    log_info "前端地址: https://${FRONTEND_DOMAIN}/"
+    log_info "后端地址: https://${BACKEND_DOMAIN}/api/status"
     echo ""
 }
 
@@ -361,7 +514,9 @@ show_help() {
     echo "用法: $0 [命令] [参数]"
     echo ""
     echo "命令:"
-    echo "  deploy          执行部署（默认）- 构建镜像并启动新容器"
+    echo "  deploy          一键部署（后端+前端+tunnel）（默认）"
+    echo "  backend         仅部署后端（镜像+容器切换）"
+    echo "  frontend        仅部署前端（Pages）"
     echo "  rollback        回滚到上一个版本"
     echo "  start [port]    快速启动（不构建镜像）"
     echo "  stop            停止所有容器"
@@ -375,6 +530,10 @@ show_help() {
     echo "  PORT_A            = ${PORT_A}"
     echo "  PORT_B            = ${PORT_B}"
     echo "  REGISTRY_HOST     = ${REGISTRY_HOST}"
+    echo "  FRONTEND_DEPLOY   = ${FRONTEND_DEPLOY}"
+    echo "  CF_PAGES_PROJECT  = ${CF_PAGES_PROJECT}"
+    echo "  FRONTEND_DOMAIN   = ${FRONTEND_DOMAIN}"
+    echo "  BACKEND_DOMAIN    = ${BACKEND_DOMAIN}"
     echo ""
     echo "环境变量:"
     echo "  SECRET_KEY                      Flask 密钥"
@@ -382,9 +541,21 @@ show_help() {
     echo "  KENGER_REGISTRY_NAMESPACE       注册中心命名空间"
     echo "  KENGER_REGISTRY_WEIGHT          服务权重"
     echo "  KENGER_REGISTRY_HEARTBEAT_INTERVAL  心跳间隔"
+    echo "  CF_API_TOKEN                    Cloudflare API Token"
+    echo "  CF_ACCOUNT_ID                   Cloudflare Account ID"
+    echo "  CF_PAGES_PROJECT                Pages 项目名"
+    echo "  FRONTEND_DEPLOY                 是否部署前端(true/false)"
+    echo "  FRONTEND_DIR                    前端目录(默认 frontend)"
+    echo "  FRONTEND_DOMAIN                 前端域名(默认 idea.156354.xyz)"
+    echo "  BACKEND_DOMAIN                  后端域名(默认 ideabackend.156354.xyz)"
+    echo "  TUNNEL_ID                       cloudflared tunnel id"
+    echo "  CLOUDFLARED_CONFIG              cloudflared 配置路径"
+    echo "  CLOUDFLARED_SERVICE             cloudflared systemd 服务名"
     echo ""
     echo "示例:"
-    echo "  $0 deploy              # 执行部署"
+    echo "  $0 deploy              # 一键部署前后端"
+    echo "  FRONTEND_DEPLOY=false $0 backend   # 仅部署后端"
+    echo "  $0 frontend            # 仅部署前端"
     echo "  $0 status              # 查看容器状态"
     echo "  $0 start 58081         # 快速启动（端口 58081）"
     echo "  $0 rollback            # 回滚到上一版本"
@@ -396,6 +567,16 @@ show_help() {
 case "${1:-deploy}" in
     deploy)
         main
+        ;;
+    backend)
+        FRONTEND_DEPLOY=false
+        main
+        ;;
+    frontend)
+        ensure_requirements
+        deploy_frontend
+        bind_frontend_domain
+        verify_routes
         ;;
     rollback)
         rollback
