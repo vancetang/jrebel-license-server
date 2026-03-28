@@ -41,6 +41,10 @@ REGISTRY_NAMESPACE="${KENGER_REGISTRY_NAMESPACE:-jrebel}"
 REGISTRY_WEIGHT="${KENGER_REGISTRY_WEIGHT:-100}"
 REGISTRY_HEARTBEAT_INTERVAL="${KENGER_REGISTRY_HEARTBEAT_INTERVAL:-10}"
 
+# 配置中心地址（容器内通过 Docker bridge gateway 访问宿主机）
+CONFIG_SERVER_URL="${CONFIG_SERVER_URL:-http://172.17.0.1:5000}"
+CONFIG_SERVER_TOKEN="${CONFIG_SERVER_TOKEN:-u2InTXnmFF0Um6Sd}"
+
 # 前端部署配置
 FRONTEND_DEPLOY="${FRONTEND_DEPLOY:-true}"            # true/false
 FRONTEND_DIR="${FRONTEND_DIR:-frontend}"
@@ -158,6 +162,8 @@ start_new_container() {
         -e SECRET_KEY="${SECRET_KEY:-your-secret-key}" \
         -e DEBUG=false \
         -e TZ=Asia/Shanghai \
+        -e CONFIG_SERVER_URL="${CONFIG_SERVER_URL}" \
+        -e CONFIG_SERVER_TOKEN="${CONFIG_SERVER_TOKEN}" \
         -e KENGER_REGISTRY_HOST="${REGISTRY_HOST}" \
         -e KENGER_REGISTRY_PORT="${port}" \
         -e KENGER_REGISTRY_NAMESPACE="${REGISTRY_NAMESPACE}" \

@@ -13,7 +13,7 @@ from kengerkit import KengerClient, ServiceRegistry
 logger = logging.getLogger(__name__)
 
 # 远程配置服务
-CONFIG_SERVER_URL = os.environ.get('CONFIG_SERVER_URL', 'http://43.143.21.219:5000')
+CONFIG_SERVER_URL = os.environ.get('CONFIG_SERVER_URL', 'http://172.17.0.1:5000')
 CONFIG_SERVER_TOKEN = os.environ.get('CONFIG_SERVER_TOKEN', 'u2InTXnmFF0Um6Sd')
 
 # 初始化 KengerClient
