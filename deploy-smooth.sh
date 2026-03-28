@@ -205,8 +205,8 @@ ensure_requirements() {
         exit 1
     fi
 
-    if ! command -v npx &> /dev/null; then
-        log_error "npx 未安装，请先安装 Node.js"
+    if [ "${FRONTEND_DEPLOY}" = "true" ] && ! command -v npx &> /dev/null; then
+        log_error "npx 未安装，请先安装 Node.js（前端部署需要）"
         exit 1
     fi
 }
